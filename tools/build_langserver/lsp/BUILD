@@ -33,6 +33,7 @@ go_test(
     data = ["test_data"],
     deps = [
         ":lsp",
+        "///third_party/go/github.com_bazelbuild_buildtools//build",
         "///third_party/go/github.com_sourcegraph_go-lsp//:go-lsp",
         "///third_party/go/github.com_sourcegraph_jsonrpc2//:jsonrpc2",
         "///third_party/go/github.com_stretchr_testify//assert",
