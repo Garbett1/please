@@ -650,7 +650,7 @@ func (c *Client) execute(target *core.BuildTarget, command *pb.Command, digest *
 	// work begins
 	ctx, span := c.tracer.Start(
 		context.Background(),
-		"please",
+		"execute-target",
 		trace.WithAttributes(commonAttrs...))
 	defer span.End()
 
