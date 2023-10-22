@@ -3,6 +3,7 @@ package build
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -193,7 +194,7 @@ func buildTarget(state *core.BuildState, target *core.BuildTarget, runRemotely b
 	}
 
 	if runRemotely {
-		metadata, err = state.RemoteClient.Build(target)
+		metadata, err = state.RemoteClient.Build(context.TODO(), target)
 		if err != nil {
 			return err
 		}
@@ -337,7 +338,7 @@ func buildTarget(state *core.BuildState, target *core.BuildTarget, runRemotely b
 		if runRemotely && len(outs) != len(target.Outputs()) {
 			// postBuildFunction has changed the target - must rebuild it
 			log.Info("Rebuilding %s after post-build function", target)
-			metadata, err = state.RemoteClient.Build(target)
+			metadata, err = state.RemoteClient.Build(context.TODO(), target)
 			if err != nil {
 				return err
 			}

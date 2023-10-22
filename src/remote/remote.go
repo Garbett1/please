@@ -339,11 +339,11 @@ func (c *Client) digestEnum() pb.DigestFunction_Value {
 }
 
 // Build executes a remote build of the given target.
-func (c *Client) Build(target *core.BuildTarget) (*core.BuildMetadata, error) {
+func (c *Client) Build(ctx context.Context, target *core.BuildTarget) (*core.BuildMetadata, error) {
 	if err := c.CheckInitialised(); err != nil {
 		return nil, err
 	}
-	metadata, ar, digest, err := c.build(target)
+	metadata, ar, digest, err := c.build(ctx, target)
 	if err != nil {
 		return metadata, err
 	}
@@ -357,11 +357,11 @@ func (c *Client) Build(target *core.BuildTarget) (*core.BuildMetadata, error) {
 
 	if c.state.ShouldDownload(target) {
 		c.state.LogBuildResult(target, core.TargetBuilding, "Downloading")
-		if err := c.Download(target); err != nil {
+		if err := c.Download(ctx, target); err != nil {
 			return metadata, err
 		}
 		// TODO(peterebden): Should this not just be part of Download()?
-		if err := c.downloadData(target); err != nil {
+		if err := c.downloadData(ctx, target); err != nil {
 			return metadata, err
 		}
 	}
@@ -369,16 +369,16 @@ func (c *Client) Build(target *core.BuildTarget) (*core.BuildMetadata, error) {
 }
 
 // downloadData downloads all the runtime data for a target, recursively.
-func (c *Client) downloadData(target *core.BuildTarget) error {
+func (c *Client) downloadData(ctx context.Context, target *core.BuildTarget) error {
 	var g errgroup.Group
 	for _, datum := range target.AllData() {
 		if l, ok := datum.Label(); ok {
 			t := c.state.Graph.TargetOrDie(l)
 			g.Go(func() error {
-				if err := c.Download(t); err != nil {
+				if err := c.Download(ctx, t); err != nil {
 					return err
 				}
-				return c.downloadData(t)
+				return c.downloadData(ctx, t)
 			})
 		}
 	}
@@ -386,22 +386,22 @@ func (c *Client) downloadData(target *core.BuildTarget) error {
 }
 
 // Run runs a target on the remote executors.
-func (c *Client) Run(target *core.BuildTarget) error {
+func (c *Client) Run(ctx context.Context, target *core.BuildTarget) error {
 
 	if err := c.CheckInitialised(); err != nil {
 		return err
 	}
-	cmd, digest, err := c.uploadAction(context.TODO(), target, false, true)
+	cmd, digest, err := c.uploadAction(ctx, target, false, true)
 	if err != nil {
 		return err
 	}
 	// 24 hours is kind of an arbitrarily long timeout. Basically we just don't want to limit it here.
-	_, _, err = c.execute(target, cmd, digest, false, false)
+	_, _, err = c.execute(ctx, target, cmd, digest, false, false)
 	return err
 }
 
 // build implements the actual build of a target.
-func (c *Client) build(target *core.BuildTarget) (*core.BuildMetadata, *pb.ActionResult, *pb.Digest, error) {
+func (c *Client) build(ctx context.Context, target *core.BuildTarget) (*core.BuildMetadata, *pb.ActionResult, *pb.Digest, error) {
 	needStdout := target.PostBuildFunction != nil
 	// If we're gonna stamp the target, first check the unstamped equivalent that we store results under.
 	// This implements the rules of stamp whereby we don't force rebuilds every time e.g. the SCM revision changes.
@@ -410,7 +410,7 @@ func (c *Client) build(target *core.BuildTarget) (*core.BuildMetadata, *pb.Actio
 		command, digest, err := c.buildAction(target, false, false)
 		if err != nil {
 			return nil, nil, nil, err
-		} else if metadata, ar := c.maybeRetrieveResults(target, command, digest, false, needStdout); metadata != nil {
+		} else if metadata, ar := c.maybeRetrieveResults(ctx, target, command, digest, false, needStdout); metadata != nil {
 			c.unstampedBuildActionDigests.Put(target.Label, digest)
 			return metadata, ar, digest, nil
 		}
@@ -420,14 +420,14 @@ func (c *Client) build(target *core.BuildTarget) (*core.BuildMetadata, *pb.Actio
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	metadata, ar, err := c.execute(target, command, stampedDigest, false, needStdout)
+	metadata, ar, err := c.execute(ctx, target, command, stampedDigest, false, needStdout)
 	if target.Stamp && err == nil {
 		err = c.verifyActionResult(target, command, unstampedDigest, ar, c.state.Config.Remote.VerifyOutputs, false)
 		if err == nil {
 			// Store results under unstamped digest too.
 			c.locallyCacheResults(target, unstampedDigest, metadata, ar)
 		}
-		c.client.UpdateActionResult(context.Background(), &pb.UpdateActionResultRequest{
+		c.client.UpdateActionResult(ctx, &pb.UpdateActionResultRequest{
 			InstanceName: c.instance,
 			ActionDigest: unstampedDigest,
 			ActionResult: ar,
@@ -440,7 +440,7 @@ func (c *Client) build(target *core.BuildTarget) (*core.BuildMetadata, *pb.Actio
 }
 
 // Download downloads outputs for the given target.
-func (c *Client) Download(target *core.BuildTarget) error {
+func (c *Client) Download(ctx context.Context, target *core.BuildTarget) error {
 	if target.Local {
 		return nil // No download needed since this target was built locally
 	}
@@ -467,11 +467,11 @@ func (c *Client) Download(target *core.BuildTarget) error {
 			log.Debug("Not downloading outputs for %s, they're already up-to-date", target)
 			return nil
 		}
-		_, ar := c.retrieveResults(target, nil, buildAction, false, false)
+		_, ar := c.retrieveResults(ctx, target, nil, buildAction, false, false)
 		if ar == nil {
 			return fmt.Errorf("Failed to retrieve action result for %s", target)
 		}
-		return c.reallyDownload(target, buildAction, ar)
+		return c.reallyDownload(ctx, target, buildAction, ar)
 	})
 }
 
@@ -484,13 +484,13 @@ func (c *Client) download(target *core.BuildTarget, f func() error) error {
 	return d.err
 }
 
-func (c *Client) reallyDownload(target *core.BuildTarget, digest *pb.Digest, ar *pb.ActionResult) error {
+func (c *Client) reallyDownload(ctx context.Context, target *core.BuildTarget, digest *pb.Digest, ar *pb.ActionResult) error {
 	log.Debug("Downloading outputs for %s", target)
 
 	if err := removeOutputs(target); err != nil {
 		return err
 	}
-	if err := c.downloadActionOutputs(context.Background(), ar, target); err != nil {
+	if err := c.downloadActionOutputs(ctx, ar, target); err != nil {
 		return c.wrapActionErr(err, digest)
 	}
 	c.recordAttrs(target, digest)
@@ -564,7 +564,7 @@ func moveDirToOutDir(target *core.BuildTarget, dir string) error {
 
 // Test executes a remote test of the given target.
 // It returns the results (and coverage if appropriate) as bytes to be parsed elsewhere.
-func (c *Client) Test(target *core.BuildTarget, run int) (metadata *core.BuildMetadata, err error) {
+func (c *Client) Test(ctx context.Context, target *core.BuildTarget, run int) (metadata *core.BuildMetadata, err error) {
 	if err := c.CheckInitialised(); err != nil {
 		return nil, err
 	}
@@ -572,10 +572,10 @@ func (c *Client) Test(target *core.BuildTarget, run int) (metadata *core.BuildMe
 	if err != nil {
 		return nil, err
 	}
-	metadata, ar, err := c.execute(target, command, digest, true, false)
+	metadata, ar, err := c.execute(ctx, target, command, digest, true, false)
 
 	if ar != nil {
-		_, dlErr := c.client.DownloadActionOutputs(context.Background(), ar, target.TestDir(run), c.fileMetadataCache)
+		_, dlErr := c.client.DownloadActionOutputs(ctx, ar, target.TestDir(run), c.fileMetadataCache)
 		if dlErr != nil {
 			log.Warningf("%v: failed to download test outputs: %v", target.Label, dlErr)
 		}
@@ -585,7 +585,7 @@ func (c *Client) Test(target *core.BuildTarget, run int) (metadata *core.BuildMe
 
 // retrieveResults retrieves target results from where it can (either from the local cache or from remote).
 // It returns nil if it cannot be retrieved.
-func (c *Client) retrieveResults(target *core.BuildTarget, command *pb.Command, digest *pb.Digest, needStdout, isTest bool) (*core.BuildMetadata, *pb.ActionResult) {
+func (c *Client) retrieveResults(ctx context.Context, target *core.BuildTarget, command *pb.Command, digest *pb.Digest, needStdout, isTest bool) (*core.BuildMetadata, *pb.ActionResult) {
 	// First see if this execution is cached locally
 	if metadata, ar := c.retrieveLocalResults(target, digest); metadata != nil {
 		log.Debug("Got locally cached results for %s %s (age %s)", target.Label, c.actionURL(digest, true), time.Since(metadata.Timestamp).Truncate(time.Second))
@@ -595,7 +595,7 @@ func (c *Client) retrieveResults(target *core.BuildTarget, command *pb.Command, 
 	c.state.LogBuildResult(target, core.TargetBuilding, "Checking remote...")
 	// Now see if it is cached on the remote server
 	start := time.Now()
-	if ar, err := c.client.GetActionResult(context.Background(), &pb.GetActionResultRequest{
+	if ar, err := c.client.GetActionResult(ctx, &pb.GetActionResultRequest{
 		InstanceName: c.instance,
 		ActionDigest: digest,
 		InlineStdout: needStdout,
@@ -620,9 +620,9 @@ func (c *Client) retrieveResults(target *core.BuildTarget, command *pb.Command, 
 
 // maybeRetrieveResults is like retrieveResults but only retrieves if we aren't forcing a rebuild of the target
 // (i.e. not if we're doing plz build --rebuild or plz test --rerun).
-func (c *Client) maybeRetrieveResults(target *core.BuildTarget, command *pb.Command, digest *pb.Digest, isTest, needStdout bool) (*core.BuildMetadata, *pb.ActionResult) {
+func (c *Client) maybeRetrieveResults(ctx context.Context, target *core.BuildTarget, command *pb.Command, digest *pb.Digest, isTest, needStdout bool) (*core.BuildMetadata, *pb.ActionResult) {
 	if !c.state.ShouldRebuild(target) && !(c.state.NeedTests && isTest && c.state.ForceRerun) {
-		if metadata, ar := c.retrieveResults(target, command, digest, needStdout, isTest); metadata != nil {
+		if metadata, ar := c.retrieveResults(ctx, target, command, digest, needStdout, isTest); metadata != nil {
 			return metadata, ar
 		}
 	}
@@ -631,9 +631,9 @@ func (c *Client) maybeRetrieveResults(target *core.BuildTarget, command *pb.Comm
 
 // execute submits an action to the remote executor and monitors its progress.
 // The returned ActionResult may be nil on failure.
-func (c *Client) execute(target *core.BuildTarget, command *pb.Command, digest *pb.Digest, isTest, needStdout bool) (*core.BuildMetadata, *pb.ActionResult, error) {
+func (c *Client) execute(ctx context.Context, target *core.BuildTarget, command *pb.Command, digest *pb.Digest, isTest, needStdout bool) (*core.BuildMetadata, *pb.ActionResult, error) {
 	if !isTest || (!c.state.ForceRerun && c.state.NumTestRuns == 1) {
-		if metadata, ar := c.maybeRetrieveResults(target, command, digest, isTest, needStdout); metadata != nil {
+		if metadata, ar := c.maybeRetrieveResults(ctx, target, command, digest, isTest, needStdout); metadata != nil {
 			return metadata, ar, nil
 		}
 	}
@@ -649,7 +649,7 @@ func (c *Client) execute(target *core.BuildTarget, command *pb.Command, digest *
 
 	// work begins
 	ctx, span := c.tracer.Start(
-		context.Background(),
+		ctx,
 		"execute-target",
 		trace.WithAttributes(commonAttrs...))
 	defer span.End()
@@ -662,11 +662,11 @@ func (c *Client) execute(target *core.BuildTarget, command *pb.Command, digest *
 	// Remote actions & filegroups get special treatment at this point.
 	if target.IsFilegroup {
 		// Filegroups get special-cased since they are just a movement of files.
-		return c.buildFilegroup(target, command, digest)
+		return c.buildFilegroup(ctx, target, command, digest)
 	} else if target.IsRemoteFile {
-		return c.fetchRemoteFile(target, digest)
+		return c.fetchRemoteFile(ctx, target, digest)
 	} else if target.IsTextFile {
-		return c.buildTextFile(c.state, target, command, digest)
+		return c.buildTextFile(ctx, c.state, target, command, digest)
 	}
 
 	// We should skip the cache lookup (and override any existing action result) if we --rebuild, or --rerun and this is
@@ -750,7 +750,7 @@ func (c *Client) reallyExecute(ctx context.Context, target *core.BuildTarget, co
 		// Handle timing issues if we try to resume an execution as it fails. If we get a
 		// "not found" we might find that it's already been completed and we can't resume.
 		if status.Code(err) == codes.NotFound {
-			if metadata, ar := c.retrieveResults(target, command, digest, needStdout, isTest); metadata != nil {
+			if metadata, ar := c.retrieveResults(ctx, target, command, digest, needStdout, isTest); metadata != nil {
 				return metadata, ar, nil
 			}
 		}
@@ -868,7 +868,7 @@ func (c *Client) DataRate() (int, int, int, int) {
 }
 
 // fetchRemoteFile sends a request to fetch a file using the remote asset API.
-func (c *Client) fetchRemoteFile(target *core.BuildTarget, actionDigest *pb.Digest) (*core.BuildMetadata, *pb.ActionResult, error) {
+func (c *Client) fetchRemoteFile(ctx context.Context, target *core.BuildTarget, actionDigest *pb.Digest) (*core.BuildMetadata, *pb.ActionResult, error) {
 	c.state.LogBuildResult(target, core.TargetBuilding, "Downloading...")
 	urls := target.AllURLs(c.state)
 	req := &fpb.FetchBlobRequest{
@@ -884,7 +884,7 @@ func (c *Client) fetchRemoteFile(target *core.BuildTarget, actionDigest *pb.Dige
 			}}
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), target.BuildTimeout)
+	ctx, cancel := context.WithTimeout(ctx, target.BuildTimeout)
 	defer cancel()
 	resp, err := c.fetchClient.FetchBlob(ctx, req)
 	if err != nil {
@@ -900,7 +900,7 @@ func (c *Client) fetchRemoteFile(target *core.BuildTarget, actionDigest *pb.Dige
 			IsExecutable: target.IsBinary,
 		}},
 	}
-	if _, err := c.client.UpdateActionResult(context.Background(), &pb.UpdateActionResultRequest{
+	if _, err := c.client.UpdateActionResult(ctx, &pb.UpdateActionResultRequest{
 		InstanceName: c.instance,
 		ActionDigest: actionDigest,
 		ActionResult: ar,
@@ -911,13 +911,13 @@ func (c *Client) fetchRemoteFile(target *core.BuildTarget, actionDigest *pb.Dige
 }
 
 // buildFilegroup "builds" a single filegroup target.
-func (c *Client) buildFilegroup(target *core.BuildTarget, command *pb.Command, actionDigest *pb.Digest) (*core.BuildMetadata, *pb.ActionResult, error) {
+func (c *Client) buildFilegroup(ctx context.Context, target *core.BuildTarget, command *pb.Command, actionDigest *pb.Digest) (*core.BuildMetadata, *pb.ActionResult, error) {
 	inputDir, err := c.uploadInputDir(nil, target, false) // We don't need to actually upload the inputs here, that is already done.
 	if err != nil {
 		return nil, nil, err
 	}
 	ar := &pb.ActionResult{}
-	if err := c.uploadBlobs(context.TODO(), func(ch chan<- *uploadinfo.Entry) error {
+	if err := c.uploadBlobs(ctx, func(ch chan<- *uploadinfo.Entry) error {
 		defer close(ch)
 		inputDir.Build(ch)
 		for _, out := range command.OutputPaths {
@@ -943,7 +943,7 @@ func (c *Client) buildFilegroup(target *core.BuildTarget, command *pb.Command, a
 	}); err != nil {
 		return nil, nil, err
 	}
-	if _, err := c.client.UpdateActionResult(context.TODO(), &pb.UpdateActionResultRequest{
+	if _, err := c.client.UpdateActionResult(ctx, &pb.UpdateActionResultRequest{
 		InstanceName: c.instance,
 		ActionDigest: actionDigest,
 		ActionResult: ar,
@@ -954,9 +954,9 @@ func (c *Client) buildFilegroup(target *core.BuildTarget, command *pb.Command, a
 }
 
 // buildTextFile "builds" uploads a text file to the CAS
-func (c *Client) buildTextFile(state *core.BuildState, target *core.BuildTarget, command *pb.Command, actionDigest *pb.Digest) (*core.BuildMetadata, *pb.ActionResult, error) {
+func (c *Client) buildTextFile(ctx context.Context, state *core.BuildState, target *core.BuildTarget, command *pb.Command, actionDigest *pb.Digest) (*core.BuildMetadata, *pb.ActionResult, error) {
 	ar := &pb.ActionResult{}
-	if err := c.uploadBlobs(context.TODO(), func(ch chan<- *uploadinfo.Entry) error {
+	if err := c.uploadBlobs(ctx, func(ch chan<- *uploadinfo.Entry) error {
 		defer close(ch)
 		if len(command.OutputPaths) != 1 {
 			return fmt.Errorf("text_file %s should have a single output, has %d", target.Label, len(command.OutputPaths))
@@ -976,7 +976,7 @@ func (c *Client) buildTextFile(state *core.BuildState, target *core.BuildTarget,
 	}); err != nil {
 		return nil, nil, err
 	}
-	if _, err := c.client.UpdateActionResult(context.Background(), &pb.UpdateActionResultRequest{
+	if _, err := c.client.UpdateActionResult(ctx, &pb.UpdateActionResultRequest{
 		InstanceName: c.instance,
 		ActionDigest: actionDigest,
 		ActionResult: ar,

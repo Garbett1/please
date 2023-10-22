@@ -376,7 +376,7 @@ func doTestResults(state *core.BuildState, target *core.BuildTarget, runRemotely
 	var metadata *core.BuildMetadata
 
 	if runRemotely {
-		metadata, err = state.RemoteClient.Test(target, run)
+		metadata, err = state.RemoteClient.Test(context.TODO(), target, run)
 		if metadata == nil {
 			metadata = new(core.BuildMetadata)
 		}

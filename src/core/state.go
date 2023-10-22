@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"crypto/sha1"
 	"crypto/sha256"
 	"fmt"
@@ -98,13 +99,13 @@ type Parser interface {
 // A RemoteClient is the interface to a remote execution service.
 type RemoteClient interface {
 	// Build invokes a build of the target remotely.
-	Build(target *BuildTarget) (*BuildMetadata, error)
+	Build(ctx context.Context, target *BuildTarget) (*BuildMetadata, error)
 	// Test invokes a test run of the target remotely.
-	Test(target *BuildTarget, run int) (metadata *BuildMetadata, err error)
+	Test(ctx context.Context, target *BuildTarget, run int) (metadata *BuildMetadata, err error)
 	// Run executes the target remotely.
-	Run(target *BuildTarget) error
+	Run(ctx context.Context, target *BuildTarget) error
 	// Download downloads the outputs for the given target that has already been built remotely.
-	Download(target *BuildTarget) error
+	Download(ctx context.Context, target *BuildTarget) error
 	// PrintHashes shows the hashes of a target.
 	PrintHashes(target *BuildTarget, isTest bool)
 	// DataRate returns an estimate of the current in/out RPC data rates and totals so far in bytes per second.
@@ -929,7 +930,7 @@ func (state *BuildState) WillRunRemotely(target *BuildTarget) bool {
 // If remote execution is not enabled it has no effect.
 func (state *BuildState) EnsureDownloaded(target *BuildTarget) error {
 	if state.RemoteClient != nil {
-		if err := state.RemoteClient.Download(target); err != nil {
+		if err := state.RemoteClient.Download(context.TODO(), target); err != nil {
 			return fmt.Errorf("Failed to download outputs for %s: %s", target, err)
 		}
 	}
@@ -1270,7 +1271,7 @@ func (state *BuildState) DownloadInputsIfNeeded(target *BuildTarget, runtime boo
 			if l, ok := input.Label(); ok {
 				dep := state.Graph.TargetOrDie(l)
 				if s := dep.State(); s == BuiltRemotely || s == ReusedRemotely {
-					if err := state.RemoteClient.Download(dep); err != nil {
+					if err := state.RemoteClient.Download(context.TODO(), dep); err != nil {
 						return err
 					}
 				}

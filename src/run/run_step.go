@@ -115,7 +115,7 @@ func run(ctx context.Context, state *core.BuildState, label core.AnnotatedOutput
 		if state.RemoteClient == nil {
 			log.Fatalf("You must configure remote execution to use plz run --remote")
 		}
-		return nil, nil, state.RemoteClient.Run(target)
+		return nil, nil, state.RemoteClient.Run(context.TODO(), target)
 	}
 
 	if tmpDir {

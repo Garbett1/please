@@ -1,6 +1,7 @@
 package remote
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -55,7 +56,7 @@ func TestExecuteBuild(t *testing.T) {
 	// on success).
 	target.PostBuildFunction = testFunction{}
 	target.Command = "echo hello && echo test > $OUT"
-	metadata, err := c.Build(target)
+	metadata, err := c.Build(context.TODO(), target)
 	assert.NoError(t, err)
 	assert.Equal(t, []byte("hello\n"), metadata.Stdout)
 }
@@ -81,7 +82,7 @@ func TestExecutePostBuildFunction(t *testing.T) {
 		assert.Equal(t, "wibble wibble wibble", output)
 		return nil
 	})
-	_, err := c.Build(target)
+	_, err := c.Build(context.TODO(), target)
 	assert.NoError(t, err)
 	assert.Equal(t, []string{"somefile"}, target.Outputs())
 }
@@ -94,7 +95,7 @@ func TestExecuteFetch(t *testing.T) {
 	target.AddOutput("please_14.2.0.tar.gz")
 	target.Hashes = []string{"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"}
 	target.BuildTimeout = time.Minute
-	_, err := c.Build(target)
+	_, err := c.Build(context.TODO(), target)
 	assert.NoError(t, err)
 }
 
@@ -110,7 +111,7 @@ func TestExecuteTest(t *testing.T) {
 	err := c.Store(target)
 	assert.NoError(t, err)
 	c.state.Graph.AddTarget(target)
-	_, err = c.Test(target, 1)
+	_, err = c.Test(context.TODO(), target, 1)
 	assert.NoError(t, err)
 
 	results, err := os.ReadFile(filepath.Join(target.TestDir(1), core.TestResultsFile))
@@ -132,7 +133,7 @@ func TestExecuteTestWithCoverage(t *testing.T) {
 	assert.NoError(t, err)
 	target.SetState(core.Built)
 	c.state.Graph.AddTarget(target)
-	_, err = c.Test(target, 1)
+	_, err = c.Test(context.TODO(), target, 1)
 	assert.NoError(t, err)
 
 	results, err := os.ReadFile(filepath.Join(target.TestDir(1), core.TestResultsFile))
@@ -263,7 +264,7 @@ func TestOutDirsSetOutsOnTarget(t *testing.T) {
 	// Doesn't actually get executed but gives an idea as to how this rule is mocked up
 	outDirTarget.Command = "touch foo/bar.txt && touch foo/baz.txt"
 	c.state.Graph.AddTarget(outDirTarget)
-	_, err := c.Build(outDirTarget)
+	_, err := c.Build(context.TODO(), outDirTarget)
 	require.NoError(t, err)
 
 	assert.Len(t, outDirTarget.Outputs(), 2)
