@@ -57,11 +57,14 @@ var successfulLocalTargetBuildDuration = metrics.NewHistogram(
 )
 
 // Build implements the core logic for building a single target.
-func Build(state *core.BuildState, target *core.BuildTarget, remote bool) {
+func Build(ctx context.Context, state *core.BuildState, target *core.BuildTarget, remote bool) {
 	state = state.ForTarget(target)
 	target.SetState(core.Building)
 	start := time.Now()
-	if err := buildTarget(state, target, remote); err != nil {
+	tracer := otel.Tracer("please-tracer")
+	ctx, span := tracer.Start(ctx, "build.Build")
+	defer span.End()
+	if err := buildTarget(ctx, state, target, remote); err != nil {
 		if errors.Is(err, errStop) {
 			target.SetState(core.Stopped)
 			state.LogBuildResult(target, core.TargetBuildStopped, "Build stopped")
@@ -153,7 +156,7 @@ func prepareOnly(state *core.BuildState, target *core.BuildTarget) error {
 //     b) attempt to fetch the outputs from the cache based on the output hash
 //  3. Actually build the rule
 //  4. Store result in the cache
-func buildTarget(state *core.BuildState, target *core.BuildTarget, runRemotely bool) (err error) {
+func buildTarget(ctx context.Context, state *core.BuildState, target *core.BuildTarget, runRemotely bool) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			if e, ok := r.(error); ok {
@@ -196,7 +199,7 @@ func buildTarget(state *core.BuildState, target *core.BuildTarget, runRemotely b
 
 	if runRemotely {
 		tracer := otel.Tracer("please-tracer")
-		ctx, span := tracer.Start(context.TODO(), "buildRemote.buildTarget")
+		ctx, span := tracer.Start(ctx, "buildRemote.buildTarget")
 		defer span.End()
 		metadata, err = state.RemoteClient.Build(ctx, target)
 		if err != nil {

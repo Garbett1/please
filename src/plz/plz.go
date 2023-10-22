@@ -1,6 +1,10 @@
 package plz
 
 import (
+	"context"
+	"github.com/honeycombio/honeycomb-opentelemetry-go"
+	"github.com/honeycombio/otel-config-go/otelconfig"
+	"go.opentelemetry.io/otel"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -27,6 +31,23 @@ var log = logging.Log
 // starting this (otherwise a sufficiently fast build may bypass you completely).
 func Run(targets, preTargets []core.BuildLabel, state *core.BuildState, config *core.Configuration, arch cli.Arch) {
 	build.Init(state)
+	tracer := otel.Tracer("please-tracer")
+	bsp := honeycomb.NewBaggageSpanProcessor()
+
+	// use honeycomb distro to setup OpenTelemetry SDK
+	shutdown, err := otelconfig.ConfigureOpenTelemetry(
+		otelconfig.WithSpanProcessor(bsp),
+		otelconfig.WithLogLevel("DEBUG"),
+		otelconfig.WithLogger(log),
+	)
+	if err != nil {
+		log.Warningf("failed to initialise tracing? continuing anyway: %v", err)
+	}
+	ctx, span := tracer.Start(context.Background(), "plz.Run")
+	defer func() {
+		span.End()
+		shutdown()
+	}()
 	if state.Config.Remote.URL != "" {
 		state.RemoteClient = remote.New(state)
 	}
@@ -72,7 +93,7 @@ func Run(targets, preTargets []core.BuildLabel, state *core.BuildState, config *
 				case core.TestTask:
 					test.Test(state, task.Target, remote, int(task.Run))
 				case core.BuildTask:
-					build.Build(state, task.Target, remote)
+					build.Build(ctx, state, task.Target, remote)
 				}
 				state.TaskDone()
 			}(task)
