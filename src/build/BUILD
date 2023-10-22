@@ -10,6 +10,7 @@ go_library(
     deps = [
         "///third_party/go/github.com_hashicorp_go-multierror//:go-multierror",
         "///third_party/go/github.com_hashicorp_go-retryablehttp//:go-retryablehttp",
+        "///third_party/go/go.opentelemetry.io_otel//:otel",
         "//src/cli",
         "//src/cli/logging",
         "//src/core",
@@ -43,12 +44,9 @@ go_test(
     srcs = ["build_step_stress_test.go"],
     external = True,
     deps = [
-        ":build",
         "///third_party/go/github.com_stretchr_testify//assert",
-        "///third_party/go/github.com_stretchr_testify//require",
         "//src/cli/logging",
         "//src/core",
-        "//src/output",
         "//src/plz",
     ],
 )
