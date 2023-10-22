@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"go.opentelemetry.io/otel"
 	"hash"
 	"io"
 	"net/http"
@@ -194,7 +195,10 @@ func buildTarget(state *core.BuildState, target *core.BuildTarget, runRemotely b
 	}
 
 	if runRemotely {
-		metadata, err = state.RemoteClient.Build(context.TODO(), target)
+		tracer := otel.Tracer("please-tracer")
+		ctx, span := tracer.Start(context.TODO(), "buildRemote.buildTarget")
+		defer span.End()
+		metadata, err = state.RemoteClient.Build(ctx, target)
 		if err != nil {
 			return err
 		}

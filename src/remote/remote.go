@@ -343,6 +343,8 @@ func (c *Client) Build(ctx context.Context, target *core.BuildTarget) (*core.Bui
 	if err := c.CheckInitialised(); err != nil {
 		return nil, err
 	}
+	ctx, span := c.tracer.Start(ctx, "build-target")
+	defer span.End()
 	metadata, ar, digest, err := c.build(ctx, target)
 	if err != nil {
 		return metadata, err
@@ -371,6 +373,8 @@ func (c *Client) Build(ctx context.Context, target *core.BuildTarget) (*core.Bui
 // downloadData downloads all the runtime data for a target, recursively.
 func (c *Client) downloadData(ctx context.Context, target *core.BuildTarget) error {
 	var g errgroup.Group
+	ctx, span := c.tracer.Start(ctx, "download-data")
+	defer span.End()
 	for _, datum := range target.AllData() {
 		if l, ok := datum.Label(); ok {
 			t := c.state.Graph.TargetOrDie(l)
@@ -387,6 +391,14 @@ func (c *Client) downloadData(ctx context.Context, target *core.BuildTarget) err
 
 // Run runs a target on the remote executors.
 func (c *Client) Run(ctx context.Context, target *core.BuildTarget) error {
+	commonAttrs := []attribute.KeyValue{
+		attribute.String("target", target.Label.Name),
+	}
+	ctx, span := c.tracer.Start(
+		ctx,
+		"run-target",
+		trace.WithAttributes(commonAttrs...))
+	defer span.End()
 
 	if err := c.CheckInitialised(); err != nil {
 		return err
@@ -444,6 +456,8 @@ func (c *Client) Download(ctx context.Context, target *core.BuildTarget) error {
 	if target.Local {
 		return nil // No download needed since this target was built locally
 	}
+	ctx, span := c.tracer.Start(ctx, "download-target")
+	defer span.End()
 	return c.download(target, func() error {
 		buildAction := c.unstampedBuildActionDigests.Get(target.Label)
 		file := core.AcquireExclusiveFileLock(target.BuildLockFile())
